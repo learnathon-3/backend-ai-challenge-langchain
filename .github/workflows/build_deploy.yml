@@ -42,6 +42,6 @@ jobs:
         AWS_REGION: "ap-northeast-2"
       run: |
         aws deploy create-deployment \
-          --application-name LangChain-CodeDeploy \
-          --deployment-group-name LangChain-CodeDeployGroup \
+          --application-name Aily-WebServiceCodeDeploy \
+          --deployment-group-name Aily-WebServiceCodeDeployGroup \
           --s3-location bucket=cplc-bucket,key=deploy/${{ env.ZIP_FILE }},bundleType=zip
