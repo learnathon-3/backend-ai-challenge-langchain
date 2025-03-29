@@ -26,6 +26,7 @@ class AgentState(TypedDict):
 
 def route(state: AgentState):
     template = """당신은 사용자의 질문에 따라 카테고리를 반환하는 역할을 합니다.
+    사용자가 요약을 원하면, summary를 반환하고, 퀴즈를 원하면 quiz를 반환하고, 채점을 원하면 check를 반환합니다.
 사용자의 질문: {question}
 
 아래는 응답해야하는 답변 입니다. 하나만 선택해서 반환하고, 그 외의 다른 설명은 하지 마세요.
@@ -133,13 +134,12 @@ def check(state: AgentState):
 
 
 def route_condition(state):
-    #if state["todo"] == 'summary':
+    if state["todo"] == 'summary':
         return "summary"
-    #elif state["todo"] == 'quiz':
-    #    return "quiz"
-    #else:
-    #    return "check"
-
+    elif state["todo"] == 'quiz':
+        return "quiz"
+    else:
+        return "check"
 
 class Agent():
     def __init__(self):
@@ -151,8 +151,8 @@ class Agent():
 
         graph.add_node ("route", route)
         graph.add_node ("summary", summary)
-        #graph.add_node ("quiz", quiz)
-        #graph.add_node ("check", check)
+        graph.add_node ("quiz", quiz)
+        graph.add_node ("check", check)
 
         
         graph.add_conditional_edges(
@@ -160,14 +160,14 @@ class Agent():
             route_condition,
             {
                 "summary": "summary",
-                #"quiz": "quiz",
-                #"check": "check"
+                "quiz": "quiz",
+                "check": "check"
             }
         )
 
         graph.add_edge ("summary", END)
-        #graph.add_edge ("quiz", END)
-        #graph.add_edge ("check", END)
+        graph.add_edge ("quiz", END)
+        graph.add_edge ("check", END)
 
         #return graph.compile(checkpointer=MemorySaver())
         return graph.compile()
