@@ -1,0 +1,47 @@
+name: build_deploy
+
+env:
+  PROJECT_NAME: langchain-svc
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v2
+
+    # zip 파일 생성
+    - name: Build zip file
+      run: zip -r ./${PROJECT_NAME}.zip .
+      shell: bash
+
+    # zip 파일 이름 환경변수 등록
+    - name: Set zip file name to env
+      run: |
+        echo "ZIP_FILE=${{ env.PROJECT_NAME }}.zip" >> $GITHUB_ENV
+
+    # S3에 업로드
+    - name: Upload to S3
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: "ap-northeast-2"
+      run: |
+        aws s3 cp ${{ env.ZIP_FILE }} s3://cplc-bucket/deploy/
+
+    # CodeDeploy 트리거
+    - name: Deploy via CodeDeploy
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: "ap-northeast-2"
+      run: |
+        aws deploy create-deployment \
+          --application-name LangChain-CodeDeploy \
+          --deployment-group-name LangChain-CodeDeployGroup \
+          --s3-location bucket=cplc-bucket,key=deploy/${{ env.ZIP_FILE }},bundleType=zip
