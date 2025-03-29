@@ -1,6 +1,7 @@
 from typing import Annotated, Iterator
 from typing_extensions import TypedDict
 
+from langgraph.prebuilt import ToolNode
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_core.runnables import RunnableConfig
@@ -8,51 +9,74 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 
 from langchain.schema import HumanMessage, SystemMessage
-from langchain_core.messages import ToolMessage
-import io
-from langgraph.managed.is_last_step import RemainingSteps
 from langgraph.checkpoint.memory import MemorySaver
+
+from langchain_milvus import Milvus
+from langchain_openai import OpenAIEmbeddings
+
 
 # API 키를 환경변수로 관리하기 위한 설정 파일
 from dotenv import load_dotenv
+import os
 
 # API 키 정보 로드
 load_dotenv()
 
+quiz_data = ""
+vectorstore = Milvus(
+        embedding_function=OpenAIEmbeddings(),
+        connection_args={"uri": os.environ["MILVUS_URI"], "token": os.environ["MILVUS_TOKEN"]},
+    )
+
+retriever = vectorstore.as_retriever()
+from langchain.tools.retriever import create_retriever_tool
+
+retriever_tool = create_retriever_tool(
+    retriever,
+    name="ai_report_search",  # 도구의 이름을 입력합니다.
+    description="use this tool to search ai report information from the PDF document",  # 도구에 대한 설명을 자세히 기입해야 합니다!!
+)
+tools = [retriever_tool]
+
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     todo: str
+    documents: list
 
 
 def route(state: AgentState):
-    template = """당신은 사용자의 질문에 따라 카테고리를 반환하는 역할을 합니다.
-    사용자가 요약을 원하면, summary를 반환하고, 퀴즈를 원하면 quiz를 반환하고, 채점을 원하면 check를 반환합니다.
-사용자의 질문: {question}
+    global quiz_data
 
-아래는 응답해야하는 답변 입니다. 하나만 선택해서 반환하고, 그 외의 다른 설명은 하지 마세요.
-1. "summary"
-2. "quiz"
-3. "check"
+    input = state["messages"][-1].content
+    template = f"""
+다음 조건에 따라 입력 메시지의 목적을 분류하세요.
+
+- 사용자가 요약을 원하면 "summary"를 반환하세요.
+- 사용자가 퀴즈 출제를 원하면 "quiz"를 반환하세요.
+- 사용자가 퀴즈 정답을 확인하려 하고, 퀴즈 데이터가 존재할 경우에만 "check"를 반환하세요.
+
+현재 퀴즈 데이터 존재 여부: {"있음" if quiz_data else "없음"}
+
+사용자 입력: {input}
+
+반환값 (summary, quiz, check 중 하나):
 
 """
 
-    question = state["messages"][-1].content
-    llm = ChatOpenAI(model="gpt-4")
+    llm = ChatOpenAI(model="gpt-4o")
 
     prompt = PromptTemplate(template=template,
-                            input_variables=["question"])
+                            input_variables=["input"])
     
     chain = prompt | llm
-    response = chain.invoke({"question": question})
+    response = chain.invoke({"input": input})
+
     return {"todo": response.content}
     
 def summary(state: AgentState):
-    prompt = """
-    AI 뉴스를 도구를 사용해서 가져와서 요약해 주세요.
-"""
-
     llm = ChatOpenAI(model="gpt-4")
-    response = llm.invoke([HumanMessage(content=prompt)])
+    llm_bind_tools = llm.bind_tools(tools)
+    response = llm_bind_tools.invoke(state["messages"])
 
     return {"messages": [response]}
 
@@ -98,18 +122,22 @@ def quiz(state: AgentState):
     ]
     
     display_response = llm.invoke(display_messages)
-    
+
+    global quiz_data
+    quiz_data = full_quiz_content
+
     return {
         "messages": [display_response],  
         "quiz_data": full_quiz_content    
     }
+
 def check(state: AgentState):
     """
     채점 에이전트
     """
     user_answer = state["messages"][-1].content
-    quiz_data = state.get("quiz_data", "퀴즈 데이터가 없습니다.")
-    
+    global quiz_data
+
     check_prompt = """
     당신은 교육 평가 전문가입니다. 사용자가 제출한 답변을 정확하게 채점하고 피드백을 제공합니다.
     채점 과정:
@@ -138,8 +166,19 @@ def route_condition(state):
         return "summary"
     elif state["todo"] == 'quiz':
         return "quiz"
-    else:
+    elif state["todo"] == "check":
         return "check"
+    else:
+        return 
+    
+def should_use_summary_tool(state):
+        last_message = state["messages"][-1]
+
+        if not last_message.tool_calls:
+            return "END"
+        else:
+            return "summary_tools"
+        
 
 class Agent():
     def __init__(self):
@@ -147,35 +186,49 @@ class Agent():
         self.state = AgentState(messages=[], todo="")  # todo 초기값 추가
 
     def initialize_graph(self):
+        global tools
         graph = StateGraph(AgentState)
+        summary_tool = ToolNode(tools)
+        quiz_tool = ToolNode(tools)
 
         graph.add_node ("route", route)
         graph.add_node ("summary", summary)
         graph.add_node ("quiz", quiz)
         graph.add_node ("check", check)
+        graph.add_node("summary_tools", summary_tool)
 
-        
+        graph.add_edge(START, "route")
         graph.add_conditional_edges(
-            START,
+            "route",
             route_condition,
             {
                 "summary": "summary",
                 "quiz": "quiz",
-                "check": "check"
+                "check": "check",
+                END: END
             }
         )
+        graph.add_conditional_edges(
+            "summary",
+            should_use_summary_tool,
+            {
+                "END": END,
+                "summary_tools": "summary_tools"
+            }
+        )
+        graph.add_edge("summary_tools", "summary")
 
-        graph.add_edge ("summary", END)
         graph.add_edge ("quiz", END)
         graph.add_edge ("check", END)
 
-        #return graph.compile(checkpointer=MemorySaver())
-        return graph.compile()
+        return graph.compile(checkpointer=MemorySaver())
+        #return graph.compile()
 
     def run(self, user_input) -> Iterator[str]:
         # config 설정
         config = RunnableConfig(
-            recursion_limit=30,
+            recursion_limit=7,
+            configurable={"thread_id": "1"}
         )
 
         self.state["messages"] = [HumanMessage(content=user_input)]
