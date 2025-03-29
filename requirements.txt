@@ -1,0 +1,11 @@
+# FastAPI 서버 관련
+fastapi
+uvicorn[standard]
+gunicorn
+
+# LangChain
+langchain
+openai
+
+# 환경 변수 관리 (선택)
+python-dotenv
