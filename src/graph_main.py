@@ -74,10 +74,12 @@ def route(state: AgentState):
     return {"todo": response.content}
     
 def summary(state: AgentState):
+    global summary_data
     llm = ChatOpenAI(model="gpt-4")
     llm_bind_tools = llm.bind_tools(tools)
     response = llm_bind_tools.invoke(state["messages"])
 
+    summary_data = response.content
     return {"messages": [response], "summary_data": response.content}
 
 def quiz(state: AgentState):
@@ -85,7 +87,7 @@ def quiz(state: AgentState):
     문제 생성 에이전트
     """
     user_message = state["messages"][-1].content
-    
+    global summary_data
     quiz_prompt = """
     당신은 교육 컨텐츠 전문가로, 주어진 주제에 대한 5지선다형 5문제를 생성합니다.
     각 문제는 다음 형식을 따라야 합니다:
@@ -105,7 +107,7 @@ def quiz(state: AgentState):
     
     messages = [
         SystemMessage(content=quiz_prompt),
-        HumanMessage(content=f"다음 주제에 대한 문제를 생성해주세요: {user_message}")
+        HumanMessage(content=f"다음 주제에 대한 문제를 생성해주세요: {user_message}\n\n다음은 관련 요약 내용입니다:\n{summary_data}")
     ]
     
     response = llm.invoke(messages)
