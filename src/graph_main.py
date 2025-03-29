@@ -22,6 +22,7 @@ import os
 # API 키 정보 로드
 load_dotenv()
 
+summary_data = ""
 quiz_data = ""
 vectorstore = Milvus(
         embedding_function=OpenAIEmbeddings(),
@@ -41,7 +42,6 @@ tools = [retriever_tool]
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     todo: str
-    documents: list
 
 
 def route(state: AgentState):
@@ -78,7 +78,7 @@ def summary(state: AgentState):
     llm_bind_tools = llm.bind_tools(tools)
     response = llm_bind_tools.invoke(state["messages"])
 
-    return {"messages": [response]}
+    return {"messages": [response], "summary_data": response.content}
 
 def quiz(state: AgentState):
     """
